@@ -16,11 +16,13 @@ from imblearn.over_sampling import RandomOverSampler
 
 warnings.filterwarnings("ignore")
 
+# ──⚙️ KONFIGURASI DATABASE──
 SQL_SERVER   = "34.51.181.101"
 SQL_DATABASE = "gotbai"
 SQL_USERNAME = "sa"
 SQL_PASSWORD = "LEtoy_89"
 
+# Ambil daftar simbol dari file listsyombol.txt di Google Drive
 SYMBOL_FILE = "/content/drive/MyDrive/listsyombol.txt"
 with open(SYMBOL_FILE, "r") as file:
     SYMBOLS = [line.strip() for line in file if line.strip()]
@@ -58,7 +60,10 @@ def calculate_indicators(df):
     df['ema_200'] = df['close'].ewm(span=200).mean()
     df['support'] = df['low'][::-1].rolling(10).min()[::-1]
     df['resistance'] = df['high'][::-1].rolling(10).max()[::-1]
+
+    # Gunakan shift(1) untuk mencegah data leakage
     df['trend'] = (df['close'].shift(1) > df['ema_200'].shift(1)).map({True: 'UPTREND', False: 'DOWNTREND'})
+
     df['volatility'] = df['close'].rolling(window=10).std()
     df['delta_rsi'] = df['rsi'].diff()
     df['ema_slope'] = df['ema_200'].diff()
@@ -102,10 +107,11 @@ def save_model_to_sql(symbol, model_obj):
         buffer = BytesIO()
         joblib.dump(model_obj, buffer)
         model_binary = buffer.getvalue()
-        model_size_kb = len(model_binary) / 1024
 
-        if model_size_kb > 5000:
-            print(f"⚠️ Model {symbol} terlalu besar ({model_size_kb:.2f} KB), tidak disimpan.")
+        # Cek ukuran model sebelum simpan
+        size_kb = buffer.tell() / 1024
+        if size_kb > 2048:
+            print(f"❌ Model {symbol} terlalu besar untuk disimpan ({size_kb:.2f} KB), lewati.")
             return
 
         conn = get_sql_connection()
@@ -172,6 +178,8 @@ def train_model_for_symbol(symbol):
     y_enc = le_label.fit_transform(y)
 
     X_tr, X_te, y_tr, y_te = train_test_split(X, y_enc, test_size=0.2, random_state=42)
+
+    # Oversampling hanya pada training set
     ros = RandomOverSampler(random_state=42)
     X_tr_bal, y_tr_bal = ros.fit_resample(X_tr, y_tr)
 
@@ -194,7 +202,7 @@ def train_model_for_symbol(symbol):
     best = study.best_params
     best["n_jobs"] = 2
     model = XGBClassifier(**best, use_label_encoder=False, eval_metric="mlogloss")
-    model.fit(X_tr_bal, y_tr_bal)
+    model.fit(pd.concat([X_tr, X_te]), pd.concat([y_tr, y_te]))  # full training setelah tuning
 
     preds = model.predict(X_te)
     f1 = f1_score(y_te, preds, average="weighted")
@@ -212,8 +220,7 @@ def train_model_for_symbol(symbol):
     save_model_metrics_to_sql(symbol, f1, acc, len(df), label_counts)
 
 def train_all_symbols():
-    cpu_total = os.cpu_count() or 8
-    workers = max(1, min(cpu_total - 2, 96))
+    workers = min(os.cpu_count() - 4, 96)
     print(f"🚀 Mulai pelatihan paralel ({workers} proses)...")
     with ProcessPoolExecutor(max_workers=workers) as executor:
         executor.map(train_model_for_symbol, SYMBOLS)
