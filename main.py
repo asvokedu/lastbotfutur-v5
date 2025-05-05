@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 from scipy.signal import argrelextrema
 import pyodbc
 from io import BytesIO
+import subprocess
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -277,6 +279,24 @@ def analyze_symbol(symbol):
     except Exception as e:
         logging.error(f"Error analisis {symbol}: {e}\n{traceback.format_exc()}")
 
+
+def run_save_candles_subprocess():
+    try:
+        logging.info("Menjalankan save_latest_candles_async.py setelah prediksi selesai...")
+        process = subprocess.Popen(
+            ["python3", "candle_new.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = process.communicate()
+
+        if stdout:
+            logging.info(f"[save_candles STDOUT] {stdout.decode().strip()}")
+        if stderr:
+            logging.warning(f"[save_candles STDERR] {stderr.decode().strip()}")
+    except Exception as e:
+        logging.error(f"Gagal menjalankan candlenew: {e}")
+
 def run_all():
     symbols = read_symbols_from_file()
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -290,6 +310,7 @@ def main_loop():
         wait_for_all_new_candles(symbols)
         logging.info("Mulai analisis prediksi")
         run_all()
+        threading.Thread(target=run_save_candles_subprocess).start()
 
 if __name__ == "__main__":
     main_loop()
