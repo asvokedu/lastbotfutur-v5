@@ -16,11 +16,12 @@ from concurrent.futures import ProcessPoolExecutor
 from io import BytesIO
 from imblearn.over_sampling import RandomOverSampler
 import traceback
+import gzip
 
 warnings.filterwarnings("ignore")
 
 # ──⚙️ KONFIGURASI DATABASE──
-SQL_SERVER   = "34.51.181.101"
+SQL_SERVER   = "34.51.164.80"
 SQL_DATABASE = "gotbai"
 SQL_USERNAME = "sa"
 SQL_PASSWORD = "LEtoy_89"
@@ -124,8 +125,10 @@ def generate_dynamic_label(df, n_future=1):
 def save_model_to_sql(symbol, model_obj):
     try:
         buffer = BytesIO()
-        joblib.dump(model_obj, buffer)
+        with gzip.GzipFile(fileobj=buffer, mode='wb') as gz:
+            joblib.dump(model_obj, gz)
         model_binary = buffer.getvalue()
+        model_size = len(model_binary)
 
         conn = get_sql_connection()
         cursor = conn.cursor()
@@ -133,11 +136,11 @@ def save_model_to_sql(symbol, model_obj):
         exists = cursor.fetchone()[0] > 0
 
         if exists:
-            cursor.execute("UPDATE model_storage SET model_binary = %s, updated_at = GETDATE() WHERE symbol = %s",
-                           (model_binary, symbol))
+            cursor.execute("UPDATE model_storage SET model_binary = %s, sizemodel = %s, updated_at = GETDATE() WHERE symbol = %s",
+                           (model_binary, model_size, symbol))
         else:
-            cursor.execute("INSERT INTO model_storage (symbol, model_binary, updated_at) VALUES (%s, %s, GETDATE())",
-                           (symbol, model_binary))
+            cursor.execute("INSERT INTO model_storage (symbol, model_binary, sizemodel, updated_at) VALUES (%s, %s, %s, GETDATE())",
+                           (symbol, model_binary, model_size))
 
         conn.commit()
         conn.close()
