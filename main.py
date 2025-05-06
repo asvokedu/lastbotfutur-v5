@@ -13,11 +13,14 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from dotenv import load_dotenv
 from scipy.signal import argrelextrema
+from ta.trend import CCIIndicator
 import pyodbc
 from io import BytesIO
 import subprocess
 import threading
 
+# Definisikan urutan fitur sesuai train2.py
+feature_columns = ['macd', 'rsi', 'ema_20', 'bollinger_upper', 'bollinger_lower', 'cci', 'support', 'resistance']
 # Load environment variables
 load_dotenv()
 
@@ -106,12 +109,28 @@ def wait_for_all_new_candles(symbols, interval='1h'):
 
 def calculate_technical_indicators(df):
     df["rsi"] = RSIIndicator(close=df["close"]).rsi()
+    # Bollinger Bands
+    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+    df['bb_upper'] = bb.bollinger_hband()
+    df['bb_middle'] = bb.bollinger_mavg()
+    df['bb_lower'] = bb.bollinger_lband()
+    df['bb_width'] = df['bb_upper'] - df['bb_lower']
+    df['bb_percent'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+
+    # CCI Indicator
+    cci = CCIIndicator(high=df['high'], low=df['low'], close=df['close'])
+    df['cci'] = cci.cci()
+
+    # Candlestick patterns
+    df['hammer'] = ((df['close'] > df['open']) &
+                    ((df['low'] < df['open'] - (df['high'] - df['low']) * 0.5)) &
+                    ((df['high'] - df['close']) < 0.2 * (df['high'] - df['low'])))
+
+    df['doji'] = (abs(df['close'] - df['open']) <= 0.1 * (df['high'] - df['low']))
+
     macd = MACD(close=df["close"])
     df["macd"] = macd.macd()
     df["signal_line"] = macd.macd_signal()
-    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
-    df["bb_high"] = bb.bollinger_hband()
-    df["bb_low"] = bb.bollinger_lband()
     df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
     df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
     df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
@@ -133,8 +152,18 @@ def calculate_technical_indicators(df):
         swing_highs = argrelextrema(highs, np.greater_equal, order=3)[0]
         support_levels = [lows[idx] for idx in swing_lows]
         resistance_levels = [highs[idx] for idx in swing_highs]
-        df["support"] = support_levels[-1] if support_levels else np.nan
-        df["resistance"] = resistance_levels[-1] if resistance_levels else np.nan
+      #df["support"] = support_levels[-1] if support_levels else np.nan
+      #df["resistance"] = resistance_levels[-1] if resistance_levels else np.nan
+        df["support"] = np.nan
+        df["resistance"] = np.nan
+
+        if support_levels:
+            df.at[df.index[-1], "support"] = support_levels[-1]
+
+        if resistance_levels:
+            df.at[df.index[-1], "resistance"] = resistance_levels[-1]
+
+
 
     df["trend"] = df.apply(lambda row: 'UPTREND' if row["close"] > row["ema_200"] else 'DOWNTREND', axis=1)
     df["trend_encoded"] = df["trend"].map({"DOWNTREND": 0, "UPTREND": 1})
@@ -142,6 +171,12 @@ def calculate_technical_indicators(df):
 
     df.dropna(inplace=True)
     return df
+
+def preprocess_data(df):
+    df = calculate_technical_indicators(df)
+    df = df.dropna().reset_index(drop=True)
+    return df
+
 
 def load_model_from_sql(symbol):
     try:
@@ -189,6 +224,22 @@ def generate_reason(latest):
     elif latest['delta_rsi'].values[0] < 0:
         reasons.append("RSI turun")
         score -= 1
+
+    if latest['bb_percent'].values[0] > 0.9:
+        reasons.append("Price near upper Bollinger Band")
+    elif latest['bb_percent'].values[0] < 0.1:
+        reasons.append("Price near lower Bollinger Band")
+
+    if latest['cci'].values[0] > 100:
+        reasons.append("CCI indicates strong uptrend")
+    elif latest['cci'].values[0] < -100:
+        reasons.append("CCI indicates strong downtrend")
+
+    if latest['hammer'].values[0]:
+        reasons.append("Hammer candlestick detected")
+    if latest['doji'].values[0]:
+        reasons.append("Doji candlestick detected")
+
 
     if latest['macd'].values[0] > latest['signal_line'].values[0]:
         reasons.append("MACD bullish crossover")
