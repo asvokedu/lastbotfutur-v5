@@ -4,9 +4,10 @@ import os
 import joblib
 import optuna
 import warnings
-from ta.trend import MACD, CCIIndicator
+from ta.trend import MACD
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
+from ta.trend import CCIIndicator
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import f1_score, accuracy_score
@@ -14,6 +15,7 @@ from xgboost import XGBClassifier
 from concurrent.futures import ProcessPoolExecutor
 from io import BytesIO
 from imblearn.over_sampling import RandomOverSampler
+import traceback
 
 warnings.filterwarnings("ignore")
 
@@ -61,11 +63,16 @@ def calculate_indicators(df):
     df['ema_200'] = df['close'].ewm(span=200).mean()
     df['support'] = df['low'][::-1].rolling(10).min()[::-1]
     df['resistance'] = df['high'][::-1].rolling(10).max()[::-1]
-    df['trend'] = df.apply(lambda x: 'UPTREND' if x['close'] > x['ema_200'] else 'DOWNTREND', axis=1).shift(1)
-
+    df['trend'] = df.apply(lambda x: 'UPTREND' if x['close'] > x['ema_200'] else 'DOWNTREND', axis=1)
     df['volatility'] = df['close'].rolling(window=10).std()
     df['delta_rsi'] = df['rsi'].diff()
     df['ema_slope'] = df['ema_200'].diff()
+
+    for i in range(1, 4):
+        df[f'close_shift_{i}'] = df['close'].shift(i)
+        df[f'volume_shift_{i}'] = df['volume'].shift(i)
+        df[f'rsi_shift_{i}'] = df['rsi'].shift(i)
+        df[f'macd_shift_{i}'] = df['macd'].shift(i)
 
     # Bollinger Bands
     bb = BollingerBands(df['close'])
@@ -85,12 +92,6 @@ def calculate_indicators(df):
                     ((df['high'] - df['close']) < 0.2 * (df['high'] - df['low'])))
 
     df['doji'] = (abs(df['close'] - df['open']) <= 0.1 * (df['high'] - df['low']))
-
-    for i in range(1, 4):
-        df[f'close_shift_{i}'] = df['close'].shift(i)
-        df[f'volume_shift_{i}'] = df['volume'].shift(i)
-        df[f'rsi_shift_{i}'] = df['rsi'].shift(i)
-        df[f'macd_shift_{i}'] = df['macd'].shift(i)
 
     df.dropna(inplace=True)
     return df
@@ -125,12 +126,6 @@ def save_model_to_sql(symbol, model_obj):
         buffer = BytesIO()
         joblib.dump(model_obj, buffer)
         model_binary = buffer.getvalue()
-
-        # Cek ukuran model sebelum simpan
-        size_kb = buffer.tell() / 1024
-        if size_kb > 2048:
-            print(f"❌ Model {symbol} terlalu besar untuk disimpan ({size_kb:.2f} KB), lewati.")
-            return
 
         conn = get_sql_connection()
         cursor = conn.cursor()
@@ -195,11 +190,10 @@ def train_model_for_symbol(symbol):
     le_label = LabelEncoder()
     y_enc = le_label.fit_transform(y)
 
-    X_tr, X_te, y_tr, y_te = train_test_split(X, y_enc, test_size=0.2, random_state=42)
-
-    # Oversampling hanya pada training set
     ros = RandomOverSampler(random_state=42)
-    X_tr_bal, y_tr_bal = ros.fit_resample(X_tr, y_tr)
+    X_bal, y_bal = ros.fit_resample(X, y_enc)
+
+    X_tr, X_te, y_tr, y_te = train_test_split(X_bal, y_bal, test_size=0.2, random_state=42)
 
     def objective(trial):
         params = {
@@ -211,7 +205,7 @@ def train_model_for_symbol(symbol):
             "n_jobs": 2
         }
         m = XGBClassifier(**params, use_label_encoder=False, eval_metric="mlogloss")
-        m.fit(X_tr_bal, y_tr_bal)
+        m.fit(X_tr, y_tr)
         preds = m.predict(X_te)
         return f1_score(y_te, preds, average="weighted")
 
@@ -220,7 +214,7 @@ def train_model_for_symbol(symbol):
     best = study.best_params
     best["n_jobs"] = 2
     model = XGBClassifier(**best, use_label_encoder=False, eval_metric="mlogloss")
-    model.fit(pd.concat([X_tr, X_te]), pd.concat([y_tr, y_te]))  # full training setelah tuning
+    model.fit(X_bal, y_bal)
 
     preds = model.predict(X_te)
     f1 = f1_score(y_te, preds, average="weighted")
@@ -245,4 +239,3 @@ def train_all_symbols():
 
 if __name__ == "__main__":
     train_all_symbols()
-
