@@ -185,6 +185,7 @@ def train_model_for_symbol(symbol):
 
     features = [c for c in df.columns if c not in ['label', 'open', 'high', 'low', 'close', 'volume',
                                                    'future_return', 'trend', 'reward_thresh', 'risk_thresh']]
+    df = df.dropna(subset=features) 
     X = df[features]
     y = df['label']
     le_label = LabelEncoder()
