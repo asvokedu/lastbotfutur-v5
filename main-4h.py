@@ -117,9 +117,9 @@ def wait_for_all_new_candles(symbols, interval='4h'):
         time.sleep(5)
 
 def calculate_technical_indicators(df):
-    df["rsi"] = RSIIndicator(close=df["close"]).rsi()
+    df["rsi"] = RSIIndicator(close=df["close"], window=4).rsi()
     # Bollinger Bands
-    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+    bb = BollingerBands(close=df["close"], window=10, window_dev=2)
     df['bb_upper'] = bb.bollinger_hband()
     df['bb_middle'] = bb.bollinger_mavg()
     df['bb_lower'] = bb.bollinger_lband()
@@ -140,10 +140,10 @@ def calculate_technical_indicators(df):
     macd = MACD(close=df["close"])
     df["macd"] = macd.macd()
     df["signal_line"] = macd.macd_signal()
-    df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
-    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
-    df["ema_100"] = df["close"].ewm(span=100, adjust=False).mean()
+    df["ema_20"] = df["close"].ewm(span=5, adjust=False).mean()
+    df["ema_50"] = df["close"].ewm(span=10, adjust=False).mean()
+    df["ema_100"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_200"] = df["close"].ewm(span=40, adjust=False).mean()
     df["ema_slope"] = df["ema_20"].diff()
 
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
@@ -191,7 +191,7 @@ def load_model_from_sql(symbol):
     try:
         conn = get_sql_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ? AND interval = ?", (symbol, '4h'))
+        cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ? AND interval = ?", (symbol, "4h"))
         row = cursor.fetchone()
         conn.close()
 
@@ -321,8 +321,8 @@ def analyze_symbol(symbol):
         price = float(latest['close'].values[0])
         last_price = fetch_binance_last_price(symbol)
         reason, signal_score = generate_reason(latest)
-        tgl = (latest['timestamp'] + pd.Timedelta(hours=1)).dt.strftime('%Y-%m-%d').values[0]
-        jam = int((latest['timestamp'] + pd.Timedelta(hours=1)).dt.strftime('%H').values[0])
+        tgl = (latest['timestamp'] + pd.Timedelta(hours=4)).dt.strftime('%Y-%m-%d').values[0]
+        jam = int((latest['timestamp'] + pd.Timedelta(hours=4)).dt.strftime('%H').values[0])
         volume = float(latest['volume'].values[0])
         conn = get_sql_connection()
         cursor = conn.cursor()
