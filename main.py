@@ -185,24 +185,26 @@ def load_model_from_sql(symbol):
         cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ?", (symbol,))
         row = cursor.fetchone()
         conn.close()
-        if row is None:
-            logging.error(f"Model untuk {symbol} tidak ditemukan di database.")
-            return None
-        model_blob = row[0]
-        buffer = BytesIO(model_blob)
-        model_data = joblib.load(buffer)
-        if isinstance(model_data, dict):
-            return model_data
-        elif isinstance(model_data, tuple) and len(model_data) >= 2:
-            model, features = model_data[0], model_data[1]
-            return {"model": model, "features": features}
-        elif hasattr(model_data, "predict") and hasattr(model_data, "predict_proba"):
-            default_features = ["rsi", "macd", "signal_line", "ema_200", "support", "resistance",
-                                "trend_encoded", "delta_rsi", "ema_slope", "volatility"]
-            return {"model": model_data, "features": default_features}
+
+        if row and row[0]:
+            buffer = BytesIO(row[0])
+            with gzip.GzipFile(fileobj=buffer, mode='rb') as gz:
+                model_data = joblib.load(gz)
+
+            if isinstance(model_data, dict):
+                return model_data
+            elif isinstance(model_data, tuple) and len(model_data) >= 2:
+                model, features = model_data[0], model_data[1]
+                return {"model": model, "features": features}
+            elif hasattr(model_data, "predict") and hasattr(model_data, "predict_proba"):
+                default_features = ["rsi", "macd", "signal_line", "ema_200", "support", "resistance",
+                                    "trend_encoded", "delta_rsi", "ema_slope", "volatility"]
+                return {"model": model_data, "features": default_features}
+            else:
+                logging.error(f"Model {symbol} format tidak dikenali.")
+                return None
         else:
-            logging.error(f"Model {symbol} format tidak dikenali.")
-            return None
+            raise ValueError(f"Model untuk simbol {symbol} tidak ditemukan di database.")
     except Exception as e:
         logging.error(f"Gagal load model dari database untuk {symbol}: {e}\n{traceback.format_exc()}")
         return None
