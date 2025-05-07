@@ -18,6 +18,7 @@ import pyodbc
 from io import BytesIO
 import subprocess
 import threading
+import gzip
 
 # Definisikan urutan fitur sesuai train2.py
 feature_columns = ['macd', 'rsi', 'ema_20', 'bollinger_upper', 'bollinger_lower', 'cci', 'support', 'resistance']
@@ -182,7 +183,7 @@ def load_model_from_sql(symbol):
     try:
         conn = get_sql_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ?", (symbol,))
+        cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ? AND interval = ?", (symbol, '1h'))
         row = cursor.fetchone()
         conn.close()
 
