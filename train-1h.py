@@ -44,7 +44,7 @@ def fetch_data_from_sql(symbol):
         conn = get_sql_connection()
         if symbol not in SYMBOLS:
             return None
-        query = f"EXEC sp_asethistori @symbol='{symbol}', @interval = '1h'"
+        query = f"EXEC sp_asethistori @symbol='{symbol}', @interval = '4h'"
         df = pd.read_sql(query, conn)
         conn.close()
         df.rename(columns={"opened": "open", "closet": "close"}, inplace=True)
@@ -132,15 +132,15 @@ def save_model_to_sql(symbol, model_obj):
 
         conn = get_sql_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM model_storage WHERE symbol = %s", (symbol,))
+        cursor.execute("SELECT COUNT(*) FROM model_storage WHERE symbol = %s AND interval = %s", (symbol, '1h'))
         exists = cursor.fetchone()[0] > 0
 
         if exists:
-            cursor.execute("UPDATE model_storage SET model_binary = %s, sizemodel = %s, updated_at = GETDATE() WHERE symbol = %s",
-                           (model_binary, model_size, symbol))
+            cursor.execute("UPDATE model_storage SET model_binary = %s, sizemodel = %s, updated_at = GETDATE() WHERE symbol = %s AND interval = %s",
+                           (model_binary, model_size, symbol, '1h'))
         else:
-            cursor.execute("INSERT INTO model_storage (symbol, model_binary, sizemodel, updated_at) VALUES (%s, %s, %s, GETDATE())",
-                           (symbol, model_binary, model_size))
+            cursor.execute("INSERT INTO model_storage (symbol, model_binary, sizemodel, interval, updated_at) VALUES (%s, %s, %s, %s, GETDATE())",
+                           (symbol, model_binary, model_size, '1h'))
 
         conn.commit()
         conn.close()
@@ -153,15 +153,16 @@ def save_model_metrics_to_sql(symbol, f1, acc, total_rows, label_counts):
         conn = get_sql_connection()
         cursor = conn.cursor()
 
-        cursor.execute("DELETE FROM model_metrics WHERE symbol = %s", (symbol,))
+        cursor.execute("DELETE FROM model_metrics WHERE symbol = %s AND interval = %s", (symbol, '1h'))
         cursor.execute("""
-            INSERT INTO model_metrics (symbol, f1_score, accuracy, total_rows, buy_count, sell_count, wait_count, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, GETDATE())
+            INSERT INTO model_metrics (symbol, f1_score, accuracy, total_rows, buy_count, sell_count, wait_count, interval, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, GETDATE())
         """, (
             symbol, f1, acc, total_rows,
             label_counts.get("BUY", 0),
             label_counts.get("SELL", 0),
-            label_counts.get("WAIT", 0)
+            label_counts.get("WAIT", 0),
+            '1h'
         ))
 
         conn.commit()
