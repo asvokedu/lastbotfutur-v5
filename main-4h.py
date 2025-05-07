@@ -73,10 +73,17 @@ def fetch_binance_last_price(symbol):
         logging.warning(f"Gagal ambil harga terakhir {symbol}: {e}")
         return None
 
+
 def wait_until_next_candle(interval='4h'):
-    now = datetime.utcnow()
-    next_candle = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    wait_seconds = int((next_candle - now).total_seconds())
+    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    hour = now.hour
+    next_hour = (hour // 4 + 1) * 4
+    if next_hour >= 24:
+        next_candle = now.replace(hour=0) + timedelta(days=1)
+    else:
+        next_candle = now.replace(hour=next_hour)
+
+    wait_seconds = int((next_candle - datetime.utcnow()).total_seconds())
     print(f"\n[Clock] Menuju candle baru ({interval}):", end=" ")
     while wait_seconds > 0:
         m, s = divmod(wait_seconds, 60)
@@ -85,6 +92,7 @@ def wait_until_next_candle(interval='4h'):
         time.sleep(1)
         wait_seconds -= 1
     print(f"\r[Clock] Candle baru dimulai.{ ' ' * 30 }")
+
 
 def wait_for_all_new_candles(symbols, interval='4h'):
     logging.info("Menunggu semua candle baru terbentuk...")
