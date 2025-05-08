@@ -148,6 +148,7 @@ def calculate_technical_indicators(df):
 
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
     df["volatility"] = df["log_return"].rolling(window=10).std()
+    df.dropna(subset=['volatility'], inplace=True)
 
     for i in range(1, 4):
         df[f"close_shift_{i}"] = df["close"].shift(i)
