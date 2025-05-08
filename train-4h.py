@@ -65,7 +65,7 @@ def calculate_indicators(df):
     df['support'] = df['low'][::-1].rolling(10).min()[::-1]
     df['resistance'] = df['high'][::-1].rolling(10).max()[::-1]
     df['trend'] = df.apply(lambda x: 'UPTREND' if x['close'] > x['ema_200'] else 'DOWNTREND', axis=1)
-    df['volatility'] = df['close'].rolling(window=10).std()
+    df['volatility'] = df['close'].rolling(window=12).std()
     df['delta_rsi'] = df['rsi'].diff()
     df['ema_slope'] = df['ema_200'].diff()
 
@@ -99,9 +99,8 @@ def calculate_indicators(df):
 
 def generate_dynamic_label(df, n_future=1):
     df = df.copy()
-    df['volatility'] = df['close'].rolling(window=10).std()
-    df['reward_thresh'] = df['volatility'] * 1.5
-    df['risk_thresh'] = df['volatility'] * 1.0
+    df['reward_thresh'] = df['volatility'] * 0.8
+    df['risk_thresh'] = df['volatility'] * 0.5
     df['future_return'] = df['close'].shift(-n_future) / df['close'] - 1
 
     labels = []
