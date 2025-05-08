@@ -44,7 +44,7 @@ def fetch_data_from_sql(symbol):
         conn = get_sql_connection()
         if symbol not in SYMBOLS:
             return None
-        query = f"EXEC sp_asethistori @symbol='{symbol}', @interval = '4h'"
+        query = f"EXEC sp_asethistori @symbol='{symbol}', @interval = '1h'"
         df = pd.read_sql(query, conn)
         conn.close()
         df.rename(columns={"opened": "open", "closet": "close"}, inplace=True)
