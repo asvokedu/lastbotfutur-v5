@@ -194,22 +194,45 @@ def load_model_from_sql(symbol):
                 model_data = joblib.load(gz)
 
             if isinstance(model_data, dict):
-                return model_data
+                # Pastikan ada model, trend_encoder, label_encoder, dan features dalam dictionary
+                model = model_data.get('model')
+                trend_encoder = model_data.get('trend_encoder')
+                label_encoder = model_data.get('label_encoder')
+                features = model_data.get('features')
+
+                # Kembalikan model dan encoder jika ada
+                if model and trend_encoder and label_encoder and features:
+                    return {
+                        "model": model,
+                        "trend_encoder": trend_encoder,
+                        "label_encoder": label_encoder,
+                        "features": features
+                    }
+                else:
+                    logging.error(f"Data model atau encoder tidak lengkap untuk simbol {symbol}.")
+                    return None
+                
             elif isinstance(model_data, tuple) and len(model_data) >= 2:
+                # Jika format model berupa tuple
                 model, features = model_data[0], model_data[1]
                 return {"model": model, "features": features}
+                
             elif hasattr(model_data, "predict") and hasattr(model_data, "predict_proba"):
+                # Jika model memiliki metode prediksi dan prediksi probabilitas
                 default_features = ["rsi", "macd", "signal_line", "ema_200", "support", "resistance",
                                     "trend_encoded", "delta_rsi", "ema_slope", "volatility"]
                 return {"model": model_data, "features": default_features}
+            
             else:
                 logging.error(f"Model {symbol} format tidak dikenali.")
                 return None
         else:
             raise ValueError(f"Model untuk simbol {symbol} tidak ditemukan di database.")
+            
     except Exception as e:
         logging.error(f"Gagal load model dari database untuk {symbol}: {e}\n{traceback.format_exc()}")
         return None
+
 
 def generate_reason(latest):
     score = 0
