@@ -104,8 +104,8 @@ def calculate_indicators(df):
 def generate_dynamic_label(df, n_future=1):
     df = df.copy()
     df.dropna(subset=['volatility'], inplace=True)
-    df['reward_thresh'] = df['volatility'] * 0.08
-    df['risk_thresh'] = df['volatility'] * 0.05
+    df['reward_thresh'] = df['volatility'] * 0.1
+    df['risk_thresh'] = df['volatility'] * 0.8
     df['future_return'] = df['close'].shift(-n_future) / df['close'] - 1
 
 
@@ -236,8 +236,8 @@ def train_model_for_symbol(symbol):
 
         return sum(f1s) / len(f1s)
 
-    study = optuna.create_study(direction="maximize", pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=10))
-    study.optimize(objective, n_trials=50, timeout=3600)
+    study = optuna.create_study(direction="maximize", pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5))
+    study.optimize(objective, n_trials=25, timeout=3600)
 
     best_params = study.best_params
     best_params["n_jobs"] = 90
