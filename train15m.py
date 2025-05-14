@@ -19,6 +19,8 @@ from imblearn.over_sampling import RandomOverSampler
 import traceback
 import gzip
 from optuna.pruners import MedianPruner
+from collections import Counter
+
 
 warnings.filterwarnings("ignore")
 
@@ -101,14 +103,12 @@ def calculate_indicators(df):
     df.dropna(inplace=True)
     return df
 
-def generate_dynamic_label(df, n_future=1):
+def generate_dynamic_label(df, reward_multiplier=1.5, risk_multiplier=1.0, n_future=1):
     df = df.copy()
     df.dropna(subset=['volatility'], inplace=True)
-    df['reward_thresh'] = df['volatility'] * 1.5
-    df['risk_thresh'] = df['volatility'] * 1
+    df['reward_thresh'] = df['volatility'] * reward_multiplier
+    df['risk_thresh'] = df['volatility'] * risk_multiplier
     df['future_return'] = df['close'].shift(-n_future) / df['close'] - 1
-
-
 
     labels = []
     for i in range(len(df)):
@@ -124,9 +124,37 @@ def generate_dynamic_label(df, n_future=1):
             labels.append("SELL")
         else:
             labels.append("WAIT")
-
     df['label'] = labels
     return df
+
+def find_best_labeling_threshold(df, reward_grid=[0.0008, 0.09, 0.05, 0.8, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], risk_grid=[0.0004, 0.05, 0.01, 0.3, 0.75, 0.85, 1.0, 1.25, 1.5, 1.75, 2.0]):
+    best_score = -1
+    best_params = (1.5, 1.0)
+    le_label = LabelEncoder()
+
+    for rwd in reward_grid:
+        for rsk in risk_grid:
+            temp_df = generate_dynamic_label(df, rwd, rsk)
+            if temp_df['label'].nunique() < 2:
+                continue
+            temp_df['label_encoded'] = le_label.fit_transform(temp_df['label'])
+            y = temp_df['label_encoded']
+
+            holdout_size = int(len(temp_df) * 0.1)
+            y_train = y[:-holdout_size]
+            y_holdout = y[-holdout_size:]
+
+            if len(set(y_holdout)) < 2:
+                continue
+
+            majority_class = Counter(y_train).most_common(1)[0][0]
+            dummy_preds = [majority_class] * len(y_holdout)
+            score = f1_score(y_holdout, dummy_preds, average='weighted')
+
+            if score > best_score:
+                best_score = score
+                best_params = (rwd, rsk)
+    return best_params
 
 def save_model_to_sql(symbol, model_obj):
     try:
@@ -186,7 +214,13 @@ def train_model_for_symbol(symbol):
         return
 
     df = calculate_indicators(df)
-    df = generate_dynamic_label(df)
+    # Cari kombinasi reward/risk terbaik
+    reward_mul, risk_mul = find_best_labeling_threshold(df)
+    print(f"🔎 {symbol} - Best Threshold: reward={reward_mul}, risk={risk_mul}")
+
+    # Buat label menggunakan threshold terbaik
+    df = generate_dynamic_label(df, reward_multiplier=reward_mul, risk_multiplier=risk_mul)
+
     df.dropna(inplace=True)
 
     if df['label'].nunique() < 2:
