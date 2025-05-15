@@ -153,27 +153,27 @@ def calculate_technical_indicators(df):
         df[f"macd_shift_{i}"] = df["macd"].shift(i)
 
     if len(df) > 20:
-    lows, highs = df["low"].values, df["high"].values
-    swing_lows = argrelextrema(lows, np.less_equal, order=3)[0]
-    swing_highs = argrelextrema(highs, np.greater_equal, order=3)[0]
-    support_levels = [lows[idx] for idx in swing_lows]
-    resistance_levels = [highs[idx] for idx in swing_highs]
+        lows, highs = df["low"].values, df["high"].values
+        swing_lows = argrelextrema(lows, np.less_equal, order=3)[0]
+        swing_highs = argrelextrema(highs, np.greater_equal, order=3)[0]
+        support_levels = [lows[idx] for idx in swing_lows]
+        resistance_levels = [highs[idx] for idx in swing_highs]
 
-    df["support"] = np.nan
-    df["resistance"] = np.nan
+        df["support"] = np.nan
+        df["resistance"] = np.nan
 
-    if support_levels:
-        support_value = support_levels[-1]
-    else:
-        support_value = df["low"].tail(20).min()
+        if support_levels:
+            support_value = support_levels[-1]
+        else:
+            support_value = df["low"].tail(20).min()
 
-    if resistance_levels:
-        resistance_value = resistance_levels[-1]
-    else:
-        resistance_value = df["high"].tail(20).max()
+        if resistance_levels:
+            resistance_value = resistance_levels[-1]
+        else:
+            resistance_value = df["high"].tail(20).max()
 
-    df.at[df.index[-1], "support"] = support_value
-    df.at[df.index[-1], "resistance"] = resistance_value
+        df.at[df.index[-1], "support"] = support_value
+        df.at[df.index[-1], "resistance"] = resistance_value
 
 
     df["trend"] = df.apply(lambda row: 'UPTREND' if row["close"] > row["ema_200"] else 'DOWNTREND', axis=1)
