@@ -126,8 +126,7 @@ def generate_dynamic_label(df, reward_multiplier=1.5, risk_multiplier=1.0, n_fut
             labels.append("WAIT")
     df['label'] = labels
     return df
-
-def find_best_labeling_threshold(df, reward_grid=[0.0008, 0.09, 0.05, 0.8, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], risk_grid=[0.0004, 0.05, 0.01, 0.3, 0.75, 0.85, 1.0, 1.25, 1.5, 1.75, 2.0]):
+def find_best_labeling_threshold(df, reward_grid=[0.0008, 0.09, 0.05, 0.5, 0.8, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0], risk_grid=[0.0004, 0.05, 0.01, 0.02, 0.3, 0.75, 0.85, 1.0, 1.25, 1.5, 1.75, 2.0]):
     best_score = -1
     best_params = (1.5, 1.0)
     le_label = LabelEncoder()
@@ -158,11 +157,20 @@ def find_best_labeling_threshold(df, reward_grid=[0.0008, 0.09, 0.05, 0.8, 1.0, 
 
 def save_model_to_sql(symbol, model_obj):
     try:
-        buffer = BytesIO()
-        with gzip.GzipFile(fileobj=buffer, mode='wb') as gz:
-            joblib.dump(model_obj, gz)
-        model_binary = buffer.getvalue()
-        model_size = len(model_binary)
+        buffer_model = BytesIO()
+        model_obj['model'].save_model(buffer_model)  # Simpan hanya XGBClassifier ke format JSON
+        xgb_model_binary = buffer_model.getvalue()
+
+        # Simpan sisa komponen (features, encoders)
+        rest_obj = {
+            'features': model_obj['features'],
+            'label_encoder': model_obj['label_encoder'],
+            'trend_encoder': model_obj['trend_encoder']
+        }
+        buffer_rest = BytesIO()
+        with gzip.GzipFile(fileobj=buffer_rest, mode='wb') as gz:
+            joblib.dump(rest_obj, gz)
+        other_binary = buffer_rest.getvalue()
 
         conn = get_sql_connection()
         cursor = conn.cursor()
@@ -170,17 +178,23 @@ def save_model_to_sql(symbol, model_obj):
         exists = cursor.fetchone()[0] > 0
 
         if exists:
-            cursor.execute("UPDATE model_storage SET model_binary = %s, sizemodel = %s, updated_at = GETDATE() WHERE symbol = %s AND interval = %s",
-                           (model_binary, model_size, symbol, '15m'))
+            cursor.execute("""
+                UPDATE model_storage
+                SET model_binary = %s, other_data = %s, sizemodel = %s, updated_at = GETDATE()
+                WHERE symbol = %s AND interval = %s
+            """, (xgb_model_binary, other_binary, len(xgb_model_binary), symbol, '15m'))
         else:
-            cursor.execute("INSERT INTO model_storage (symbol, model_binary, sizemodel, interval, updated_at) VALUES (%s, %s, %s, %s, GETDATE())",
-                           (symbol, model_binary, model_size, '15m'))
+            cursor.execute("""
+                INSERT INTO model_storage (symbol, model_binary, other_data, sizemodel, interval, updated_at)
+                VALUES (%s, %s, %s, %s, %s, GETDATE())
+            """, (symbol, xgb_model_binary, other_binary, len(xgb_model_binary), '15m'))
 
         conn.commit()
         conn.close()
         print(f"✅ Model {symbol} disimpan ke database.")
     except Exception as e:
         print(f"❌ Gagal simpan model {symbol} ke DB: {e}")
+
 
 def save_model_metrics_to_sql(symbol, f1, acc, total_rows, label_counts):
     try:
@@ -252,7 +266,7 @@ def train_model_for_symbol(symbol):
             "n_estimators": trial.suggest_int("n_estimators", 50, 300),
             "subsample": trial.suggest_float("subsample", 0.6, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
-            "n_jobs": 80
+            "n_jobs": 4
         }
 
         model = XGBClassifier(**params, use_label_encoder=False, eval_metric="mlogloss")
@@ -270,8 +284,8 @@ def train_model_for_symbol(symbol):
 
         return sum(f1s) / len(f1s)
 
-    study = optuna.create_study(direction="maximize", pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5))
-    study.optimize(objective, n_trials=20, timeout=4500)
+    study = optuna.create_study(direction="maximize", pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=10))
+    study.optimize(objective, n_trials=50, timeout=4500)
 
     best_params = study.best_params
     best_params["n_jobs"] = 47
