@@ -322,8 +322,8 @@ def analyze_symbol(symbol):
         price = float(latest['close'].values[0])
         last_price = fetch_binance_last_price(symbol)
         reason, signal_score = generate_reason(latest)
-        tgl = (latest['timestamp'] + pd.Timedelta(hours=4)).dt.strftime('%Y-%m-%d').values[0]
-        jam = int((latest['timestamp'] + pd.Timedelta(hours=4)).dt.strftime('%H').values[0])
+        tgl = (latest['timestamp'] + pd.Timedelta(minutes=15)).dt.strftime('%Y-%m-%d').values[0]
+        jam = int((latest['timestamp'] + pd.Timedelta(minutes=15)).dt.strftime('%H').values[0])
         volume = float(latest['volume'].values[0])
         conn = get_sql_connection()
         cursor = conn.cursor()
