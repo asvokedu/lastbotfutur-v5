@@ -140,11 +140,11 @@ def calculate_technical_indicators(df):
     df["ema_20"] = df["close"].ewm(span=5, adjust=False).mean()
     df["ema_50"] = df["close"].ewm(span=10, adjust=False).mean()
     df["ema_100"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["ema_200"] = df["close"].ewm(span=40, adjust=False).mean()
+    df["ema_200"] = df["close"].ewm(span=50, adjust=False).mean()
     df["ema_slope"] = df["ema_20"].diff()
 
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
-    df["volatility"] = df["log_return"].rolling(window=10).std()
+    df['volatility'] = df['close'].rolling(window=12).std()
 
     for i in range(1, 4):
         df[f"close_shift_{i}"] = df["close"].shift(i)
@@ -153,30 +153,27 @@ def calculate_technical_indicators(df):
         df[f"macd_shift_{i}"] = df["macd"].shift(i)
 
     if len(df) > 20:
-        lows, highs = df["low"].values, df["high"].values
-        swing_lows = argrelextrema(lows, np.less_equal, order=3)[0]
-        swing_highs = argrelextrema(highs, np.greater_equal, order=3)[0]
-        support_levels = [lows[idx] for idx in swing_lows]
-        resistance_levels = [highs[idx] for idx in swing_highs]
-      #df["support"] = support_levels[-1] if support_levels else np.nan
-      #df["resistance"] = resistance_levels[-1] if resistance_levels else np.nan
-        df["support"] = np.nan
-        df["resistance"] = np.nan
+    lows, highs = df["low"].values, df["high"].values
+    swing_lows = argrelextrema(lows, np.less_equal, order=3)[0]
+    swing_highs = argrelextrema(highs, np.greater_equal, order=3)[0]
+    support_levels = [lows[idx] for idx in swing_lows]
+    resistance_levels = [highs[idx] for idx in swing_highs]
 
-            # Assign fallback if no swing levels found
-        last_support = support_levels[-1] if support_levels else df["low"].tail(20).min()
-        last_resistance = resistance_levels[-1] if resistance_levels else df["high"].tail(20).max()
+    df["support"] = np.nan
+    df["resistance"] = np.nan
 
-        df.at[df.index[-1], "support"] = last_support
-        df.at[df.index[-1], "resistance"] = last_resistance
+    if support_levels:
+        support_value = support_levels[-1]
+    else:
+        support_value = df["low"].tail(20).min()
 
+    if resistance_levels:
+        resistance_value = resistance_levels[-1]
+    else:
+        resistance_value = df["high"].tail(20).max()
 
-        if support_levels:
-            df.at[df.index[-1], "support"] = support_levels[-1]
-
-        if resistance_levels:
-            df.at[df.index[-1], "resistance"] = resistance_levels[-1]
-
+    df.at[df.index[-1], "support"] = support_value
+    df.at[df.index[-1], "resistance"] = resistance_value
 
 
     df["trend"] = df.apply(lambda row: 'UPTREND' if row["close"] > row["ema_200"] else 'DOWNTREND', axis=1)
