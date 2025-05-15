@@ -20,8 +20,7 @@ import subprocess
 import threading
 import gzip
 
-# Definisikan urutan fitur sesuai train2.py
-feature_columns = ['macd', 'rsi', 'ema_20', 'bollinger_upper', 'bollinger_lower', 'cci', 'support', 'resistance']
+
 # Load environment variables
 load_dotenv()
 
@@ -55,7 +54,7 @@ def read_symbols_from_file(filepath="listsyombol.txt"):
     with open(filepath, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
-def fetch_binance_klines(symbol, interval='1h', limit=100):
+def fetch_binance_klines(symbol, interval='15m', limit=500):
     klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
     df = pd.DataFrame(klines, columns=["timestamp", "open", "high", "low", "close", "volume",
                                        "close_time", "qav", "num_trades", "taker_base", "taker_quote", "ignore"])
@@ -72,11 +71,17 @@ def fetch_binance_last_price(symbol):
     except Exception as e:
         logging.warning(f"Gagal ambil harga terakhir {symbol}: {e}")
         return None
-
-def wait_until_next_candle(interval='1h'):
-    now = datetime.utcnow()
-    next_candle = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    wait_seconds = int((next_candle - now).total_seconds())
+        
+def wait_until_next_candle(interval='15m'):
+    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    minute = now.minute
+    next_minute = ((minute // 15) + 1) * 15
+    if next_minute >= 60:
+        next_candle = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    else:
+        next_candle = now.replace(minute=next_minute, second=0, microsecond=0)
+    
+    wait_seconds = int((next_candle - datetime.utcnow()).total_seconds())
     print(f"\n[Clock] Menuju candle baru ({interval}):", end=" ")
     while wait_seconds > 0:
         m, s = divmod(wait_seconds, 60)
@@ -86,7 +91,7 @@ def wait_until_next_candle(interval='1h'):
         wait_seconds -= 1
     print(f"\r[Clock] Candle baru dimulai.{ ' ' * 30 }")
 
-def wait_for_all_new_candles(symbols, interval='1h'):
+def wait_for_all_new_candles(symbols, interval='15m'):
     logging.info("Menunggu semua candle baru terbentuk...")
     while True:
         all_new = True
@@ -109,9 +114,9 @@ def wait_for_all_new_candles(symbols, interval='1h'):
         time.sleep(5)
 
 def calculate_technical_indicators(df):
-    df["rsi"] = RSIIndicator(close=df["close"]).rsi()
+    df["rsi"] = RSIIndicator(close=df["close"], window=4).rsi()
     # Bollinger Bands
-    bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+    bb = BollingerBands(close=df["close"], window=10, window_dev=2)
     df['bb_upper'] = bb.bollinger_hband()
     df['bb_middle'] = bb.bollinger_mavg()
     df['bb_lower'] = bb.bollinger_lband()
@@ -132,15 +137,14 @@ def calculate_technical_indicators(df):
     macd = MACD(close=df["close"])
     df["macd"] = macd.macd()
     df["signal_line"] = macd.macd_signal()
-    df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
-    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
-    df["ema_100"] = df["close"].ewm(span=100, adjust=False).mean()
+    df["ema_20"] = df["close"].ewm(span=5, adjust=False).mean()
+    df["ema_50"] = df["close"].ewm(span=10, adjust=False).mean()
+    df["ema_100"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_200"] = df["close"].ewm(span=40, adjust=False).mean()
     df["ema_slope"] = df["ema_20"].diff()
 
     df["log_return"] = np.log(df["close"] / df["close"].shift(1))
     df["volatility"] = df["log_return"].rolling(window=10).std()
-    df.dropna(subset=['volatility'], inplace=True)
 
     for i in range(1, 4):
         df[f"close_shift_{i}"] = df["close"].shift(i)
@@ -158,6 +162,14 @@ def calculate_technical_indicators(df):
       #df["resistance"] = resistance_levels[-1] if resistance_levels else np.nan
         df["support"] = np.nan
         df["resistance"] = np.nan
+
+            # Assign fallback if no swing levels found
+        last_support = support_levels[-1] if support_levels else df["low"].tail(20).min()
+        last_resistance = resistance_levels[-1] if resistance_levels else df["high"].tail(20).max()
+
+        df.at[df.index[-1], "support"] = last_support
+        df.at[df.index[-1], "resistance"] = last_resistance
+
 
         if support_levels:
             df.at[df.index[-1], "support"] = support_levels[-1]
@@ -179,12 +191,11 @@ def preprocess_data(df):
     df = df.dropna().reset_index(drop=True)
     return df
 
-
 def load_model_from_sql(symbol):
     try:
         conn = get_sql_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ? AND interval = ?", (symbol, '1h'))
+        cursor.execute("SELECT model_binary FROM model_storage WHERE symbol = ? AND interval = ?", (symbol, "15m"))
         row = cursor.fetchone()
         conn.close()
 
@@ -194,45 +205,22 @@ def load_model_from_sql(symbol):
                 model_data = joblib.load(gz)
 
             if isinstance(model_data, dict):
-                # Pastikan ada model, trend_encoder, label_encoder, dan features dalam dictionary
-                model = model_data.get('model')
-                trend_encoder = model_data.get('trend_encoder')
-                label_encoder = model_data.get('label_encoder')
-                features = model_data.get('features')
-
-                # Kembalikan model dan encoder jika ada
-                if model and trend_encoder and label_encoder and features:
-                    return {
-                        "model": model,
-                        "trend_encoder": trend_encoder,
-                        "label_encoder": label_encoder,
-                        "features": features
-                    }
-                else:
-                    logging.error(f"Data model atau encoder tidak lengkap untuk simbol {symbol}.")
-                    return None
-                
+                return model_data
             elif isinstance(model_data, tuple) and len(model_data) >= 2:
-                # Jika format model berupa tuple
                 model, features = model_data[0], model_data[1]
                 return {"model": model, "features": features}
-                
             elif hasattr(model_data, "predict") and hasattr(model_data, "predict_proba"):
-                # Jika model memiliki metode prediksi dan prediksi probabilitas
                 default_features = ["rsi", "macd", "signal_line", "ema_200", "support", "resistance",
                                     "trend_encoded", "delta_rsi", "ema_slope", "volatility"]
                 return {"model": model_data, "features": default_features}
-            
             else:
                 logging.error(f"Model {symbol} format tidak dikenali.")
                 return None
         else:
             raise ValueError(f"Model untuk simbol {symbol} tidak ditemukan di database.")
-            
     except Exception as e:
         logging.error(f"Gagal load model dari database untuk {symbol}: {e}\n{traceback.format_exc()}")
         return None
-
 
 def generate_reason(latest):
     score = 0
@@ -315,7 +303,7 @@ def analyze_symbol(symbol):
             return
         model = model_data["model"]
         features = model_data["features"]
-        df = fetch_binance_klines(symbol, '1h', 100)
+        df = fetch_binance_klines(symbol, '15m', 500)
         if len(df) < 50:
             logging.warning(f"Data kurang dari 50 row untuk {symbol}")
             return
@@ -337,15 +325,15 @@ def analyze_symbol(symbol):
         price = float(latest['close'].values[0])
         last_price = fetch_binance_last_price(symbol)
         reason, signal_score = generate_reason(latest)
-        tgl = (latest['timestamp'] + pd.Timedelta(hours=1)).dt.strftime('%Y-%m-%d').values[0]
-        jam = int((latest['timestamp'] + pd.Timedelta(hours=1)).dt.strftime('%H').values[0])
+        tgl = (latest['timestamp'] + pd.Timedelta(hours=4)).dt.strftime('%Y-%m-%d').values[0]
+        jam = int((latest['timestamp'] + pd.Timedelta(hours=4)).dt.strftime('%H').values[0])
         volume = float(latest['volume'].values[0])
         conn = get_sql_connection()
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO predict_log (tgl, jam, symbol, label, interval, current_price, confidence, volume, reason, score)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (tgl, jam, symbol, pred_label, "1h", price, confidence, volume, reason, signal_score))
+        """, (tgl, jam, symbol, pred_label, "15m", price, confidence, volume, reason, signal_score))
         conn.commit()
         cursor.close()
         conn.close()
@@ -358,22 +346,6 @@ def analyze_symbol(symbol):
         logging.error(f"Error analisis {symbol}: {e}\n{traceback.format_exc()}")
 
 
-def run_save_candles_subprocess():
-    try:
-        logging.info("Menjalankan save_latest_candles_async.py setelah prediksi selesai...")
-        process = subprocess.Popen(
-            ["python3", "candle_new.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        stdout, stderr = process.communicate()
-
-        if stdout:
-            logging.info(f"[save_candles STDOUT] {stdout.decode().strip()}")
-        if stderr:
-            logging.warning(f"[save_candles STDERR] {stderr.decode().strip()}")
-    except Exception as e:
-        logging.error(f"Gagal menjalankan candlenew: {e}")
 
 def run_all():
     symbols = read_symbols_from_file()
@@ -388,7 +360,7 @@ def main_loop():
         wait_for_all_new_candles(symbols)
         logging.info("Mulai analisis prediksi")
         run_all()
-        threading.Thread(target=run_save_candles_subprocess).start()
+     
 
 if __name__ == "__main__":
     main_loop()
